@@ -1,0 +1,301 @@
+openapi: 3.0.3
+info:
+  title: Dispatch Exception CoPilot — AI Service
+  version: "1.0.0"
+  description: >
+    Turns raw courier exception updates (Arabizi / mixed English-Arabic) into a
+    strict, structured operations record: a severity/category classification,
+    an ETA impact note, a dispatcher action plan, and a customer notification.
+
+
+    This is the single sanctioned entry point the Next.js web app's
+    `analyzeExceptionText` seam calls over HTTP (see `web-app/AI_INTEGRATION.md`
+    for the prescriptive contract this spec documents).
+
+servers:
+  - url: http://localhost:8000
+    description: Local / docker-compose default
+  - url: http://ai-service:8000
+    description: Docker-compose internal network (as seen by the web-app container)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: health
+    description: Liveness/readiness check
+  - name: exceptions
+    description: Exception text analysis
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Health check
+      description: Unauthenticated liveness probe. Also reports whether an OpenAI model is configured.
+      security: []
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+                model_available: true
+
+  /v1/exceptions:analyze:
+    post:
+      tags: [exceptions]
+      summary: Analyze a raw dispatcher exception update
+      description: >
+        Classifies raw dispatcher text into a strict severity/category taxonomy
+        and produces a dispatcher action plan and a customer-facing notification.
+
+
+        On any unrecoverable failure (auth, timeout, rate limit, upstream
+        error, model refusal, or an out-of-taxonomy/malformed model output)
+        this returns the shared error envelope instead of coercing a result;
+        the caller is expected to fall back to manual triage.
+      operationId: analyzeException
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeRequest"
+            example:
+              text: "3atal el van, driver stuck bl matar"
+              shipmentId: "3f9a2b7e-1c4d-4e5a-9b0a-2d6f8e1c9a4b"
+              requestId: "b1e2c3d4-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
+      responses:
+        "200":
+          description: Analysis succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResponse"
+              example:
+                structuredRecord:
+                  severity: HIGH
+                  category: VEHICLE_ISSUE
+                  etaImpact: "+2-4 hrs (same-day at risk)"
+                actionPlan: |
+                  **Vehicle breakdown — reroute required**
+                  1. Contact driver to confirm location and safety.
+                  2. Dispatch a backup vehicle or nearby courier.
+                  3. Notify customer of the delay.
+                  **ETA impact:** +2-4 hrs (same-day at risk)
+                customerNotification: >-
+                  Your delivery is running late due to a vehicle issue. We're
+                  arranging a replacement and will update you shortly. Thanks
+                  for your patience!
+        "401":
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  message: "Unauthorized."
+                  code: UNAUTHORIZED
+                  requestId: null
+        "422":
+          description: >
+            Invalid request body, model refused to answer, model output was
+            malformed/out-of-taxonomy, or the demo fail-hook was triggered
+            (text containing "fail").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRequest:
+                  summary: Malformed/empty request body
+                  value:
+                    error:
+                      message: "Invalid request: text and shipmentId are required."
+                      code: INVALID_REQUEST
+                      requestId: null
+                refused:
+                  summary: Model refused to answer
+                  value:
+                    error:
+                      message: "AI could not analyze this update. Switch to manual triage."
+                      code: REFUSED
+                      requestId: "b1e2c3d4-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
+                invalidOutput:
+                  summary: Model output was malformed or out-of-taxonomy
+                  value:
+                    error:
+                      message: "AI returned an unusable result. Switch to manual triage."
+                      code: INVALID_OUTPUT
+                      requestId: "b1e2c3d4-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
+                demoFail:
+                  summary: Deterministic demo hook (text contains "fail")
+                  value:
+                    error:
+                      message: "AI analysis service is unavailable for shipment 3f9a2b7e-1c4d-4e5a-9b0a-2d6f8e1c9a4b. Switch to manual triage."
+                      code: DEMO_FAIL
+                      requestId: null
+        "429":
+          description: Upstream model provider rate-limited the request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  message: "AI analysis is rate limited. Try again shortly or triage manually."
+                  code: RATE_LIMITED
+                  requestId: "b1e2c3d4-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
+        "502":
+          description: Upstream model provider returned an error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  message: "AI analysis service is unavailable. Switch to manual triage."
+                  code: UPSTREAM_ERROR
+                  requestId: "b1e2c3d4-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
+        "503":
+          description: No model configured and keyword fallback disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  message: "AI analysis service is not configured. Switch to manual triage."
+                  code: NOT_CONFIGURED
+                  requestId: "b1e2c3d4-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
+        "504":
+          description: Model call exceeded the server-side timeout budget.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  message: "AI analysis timed out. Switch to manual triage."
+                  code: TIMEOUT
+                  requestId: "b1e2c3d4-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Shared static secret (`AI_SERVICE_API_KEY`), identical on both services.
+        If the AI service has no key configured, auth is disabled entirely
+        (dev mode only — never do this in a deployed environment).
+
+  schemas:
+    Severity:
+      type: string
+      enum: [LOW, HIGH, CRITICAL]
+      description: >
+        LOW: minor delay, routine, no safety concern.
+        HIGH: significant delay, at-risk delivery, refusal/rejection, damage, urgency.
+        CRITICAL: accident, injury, fire, theft, police, medical, or other emergency.
+
+    Category:
+      type: string
+      enum: [VEHICLE_ISSUE, CUSTOMER_ABSENT, WEATHER]
+      description: >
+        VEHICLE_ISSUE: breakdown, engine/battery/tyre/fuel, crash, mechanical fault.
+        CUSTOMER_ABSENT: customer not home/unreachable, no answer, refused, wrong address.
+        WEATHER: rain/storm/snow/flood/fog, blocked or closed roads due to weather.
+
+    HealthResponse:
+      type: object
+      required: [status, model_available]
+      properties:
+        status:
+          type: string
+          example: ok
+        model_available:
+          type: boolean
+          description: Whether an OpenAI model is configured (false ⇒ keyword-fallback only).
+
+    AnalyzeRequest:
+      type: object
+      required: [text, shipmentId]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: Raw dispatcher input, any language / Arabizi / mixed.
+        shipmentId:
+          type: string
+          format: uuid
+          description: UUID, for the caller's traceability. Not a lookup key on this service.
+        requestId:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID for idempotency / trace correlation. Echoed back in error bodies when present.
+
+    StructuredRecord:
+      type: object
+      required: [severity, category, etaImpact]
+      properties:
+        severity:
+          $ref: "#/components/schemas/Severity"
+        category:
+          $ref: "#/components/schemas/Category"
+        etaImpact:
+          type: string
+          description: Short free text that fits a dashboard cell, e.g. "+30-60 min (minor delay)".
+
+    AnalyzeResponse:
+      type: object
+      required: [structuredRecord, actionPlan, customerNotification]
+      properties:
+        structuredRecord:
+          $ref: "#/components/schemas/StructuredRecord"
+        actionPlan:
+          type: string
+          description: Markdown, rendered as-is in the UI.
+        customerNotification:
+          type: string
+          description: Plain text, SMS-length (2-3 sentences), no markdown.
+
+    ErrorBody:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: Human-readable, safe to show a dispatcher directly.
+        code:
+          type: string
+          nullable: true
+          description: Free-form code for observability.
+          enum:
+            - UNAUTHORIZED
+            - INVALID_REQUEST
+            - DEMO_FAIL
+            - REFUSED
+            - INVALID_OUTPUT
+            - RATE_LIMITED
+            - UPSTREAM_ERROR
+            - NOT_CONFIGURED
+            - TIMEOUT
+        requestId:
+          type: string
+          format: uuid
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"

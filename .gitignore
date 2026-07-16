@@ -1,0 +1,7 @@
+# OS / editor
+.DS_Store
+*.pem
+
+# env files (never commit real secrets)
+.env
+.env*.local

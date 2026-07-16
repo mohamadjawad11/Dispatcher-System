@@ -1,0 +1,69 @@
+// Dispatch Exception CoPilot — Prisma schema
+// Enforces a strict taxonomy for courier shipment exceptions.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ShipmentStatus {
+  DISPATCHED
+  IN_TRANSIT
+  HALTED
+  DELIVERED
+}
+
+enum Severity {
+  LOW
+  HIGH
+  CRITICAL
+}
+
+enum Category {
+  VEHICLE_ISSUE
+  CUSTOMER_ABSENT
+  WEATHER
+}
+
+model Shipment {
+  id              String         @id @default(uuid())
+  trackingNumber  String         @unique
+  customerName    String
+  destinationCity String
+  status          ShipmentStatus @default(DISPATCHED)
+  exceptions      Exception[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Exception {
+  id               String     @id @default(uuid())
+  shipmentId       String
+  shipment         Shipment   @relation(fields: [shipmentId], references: [id])
+  severity         Severity
+  category         Category
+  resolved         Boolean    @default(false)
+  rawInput         String
+  actionPlan       String
+  notificationText String
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  logs             AuditLog[]
+}
+
+model AuditLog {
+  id          String     @id @default(uuid())
+  exceptionId String?
+  exception   Exception? @relation(fields: [exceptionId], references: [id])
+  entityType  String // "SHIPMENT" or "EXCEPTION"
+  entityId    String
+  action      String
+  oldState    String?
+  newState    String
+  changedBy   String     @default("Dispatcher_System")
+  createdAt   DateTime   @default(now())
+}
