@@ -196,7 +196,3 @@ Alternatively, split deployment: `web-app` on [Vercel](https://vercel.com), with
 - **DB connection errors** — check `DATABASE_URL` matches the port Docker Compose exposes for Postgres (default host port `5433` → container port `5432`).
 
 ---
-
-## License
-
-This project was built as part of the SE × AI Challenge
