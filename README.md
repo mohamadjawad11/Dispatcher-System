@@ -10,7 +10,7 @@ Paste a driver update (Arabic, English, or mixed), and the system:
 3. Drafts a customer-facing message
 4. Saves everything to the database, ready for the dispatcher to review and edit before sending
 
-Built for the SE × AI Challenge.
+
 
 ---
 
